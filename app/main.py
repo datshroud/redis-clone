@@ -1,18 +1,45 @@
 import socket
 import threading  # noqa: F401
 
+def parseResp(data: bytes):
+    arr = data.decode().split("\r\n")
+    if arr[0][0] != '*':
+        return []
+    ans = []
+    idx = 1
+    while idx < len(arr):
+        word = arr[idx]
+        # print(word)
+        if len(word) > 0 and word[0] == '$':
+            ans.append(arr[idx + 1])
+            idx += 2
+        else:
+            idx += 1
+        # print(idx, ans)
+    return ans
+
 
 def handleClient(connection, clientAddress):
     print("Client connected, address:", clientAddress)
 
     try:
         while True:
-            data = connection.recv(1024)
+            data = connection.recv(4096)
             if not data:
                 print("Client disconnected, address:", clientAddress)
                 break
-            print(f"Received from {clientAddress}: {data}")
-            connection.sendall(b"+PONG\r\n")
+            print(f"Raw data from {clientAddress}: {data}")
+            command = parseResp(data)
+            cmd = command[0].upper()
+            # print(f"command: {command}, cmd = {cmd}, len cmd = {len(command)}")
+            if cmd == "PING":
+                connection.sendall(b"+Pong\r\n")
+            elif cmd == "ECHO" and len(command) == 2:
+                msg = command[1]
+                resp = f"${len(msg)}\r\n{msg}\r\n".encode()
+                connection.sendall(resp)
+            else:
+                connection.sendall(b"-ERR unknown command\r\n")
     except Exception as e:
         print(f"Error with {clientAddress}: {e}")
     finally:
