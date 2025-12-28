@@ -1,7 +1,12 @@
 import socket
 import threading  # noqa: F401
 
+mem = {}
+
 def parseResp(data: bytes):
+    # Parse RESP Array, ví dụ:
+    # *2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n
+    # => ["GET", "foo"]
     arr = data.decode().split("\r\n")
     if arr[0][0] != '*':
         return []
@@ -38,6 +43,19 @@ def handleClient(connection, clientAddress):
                 msg = command[1]
                 resp = f"${len(msg)}\r\n{msg}\r\n".encode()
                 connection.sendall(resp)
+            elif cmd == "SET" and len(command) == 3:
+                key = command[1]
+                value = command[2]
+                mem[key] = value
+                connection.sendall(b"+OK\r\n")
+            elif cmd == "GET" and len(command) == 2:
+                key = command[1]
+                if key in mem:
+                    value = mem[key]
+                    resp = f"${len(value)}\r\n{value}\r\n".encode()
+                    connection.sendall(resp)
+                else:
+                    connection.sendall(b"$-1\r\n") # null bulk string
             else:
                 connection.sendall(b"-ERR unknown command\r\n")
     except Exception as e:
