@@ -96,7 +96,11 @@ async def handle_command(command):
             list_mem[key] = []
         list_mem[key] = arr[::-1] + list_mem[key]
         return resp_int(len(list_mem[key]))
-
+    elif name == "LLEN" and len(command) == 2:
+        key = command[1]
+        if key not in list_mem:
+            return resp_int(0)
+        return resp_int(len(list_mem[key]))
     return resp_error("ERR unknown command")
 
     
