@@ -101,13 +101,19 @@ async def handle_command(command):
         if key not in list_mem:
             return resp_int(0)
         return resp_int(len(list_mem[key]))
-    elif name == "LPOP" and len(command) == 2:
+    elif name == "LPOP" and 2 <= len(command) <= 3:
         key = command[1]
-        if key not in list_mem or not list_mem[key]:
+        start = 1
+        if len(command) == 3:
+            try:
+                start = max(0, int(command[2]))
+            except ValueError:
+                return resp_error("ERR value is not an integer")
+        if key not in list_mem:
             return resp_bulk(None)
-        first = list_mem[key].pop(0)
-        return resp_bulk(first)
-    
+        pop_arr = list_mem[key][:start]
+        list_mem[key] = list_mem[key][start:]
+        return resp_array(pop_arr)
     return resp_error("ERR unknown command")
 
     
