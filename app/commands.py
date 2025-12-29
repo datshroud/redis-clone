@@ -101,6 +101,13 @@ async def handle_command(command):
         if key not in list_mem:
             return resp_int(0)
         return resp_int(len(list_mem[key]))
+    elif name == "LPOP" and len(command) == 2:
+        key = command[1]
+        if key not in list_mem or not list_mem[key]:
+            return resp_bulk(None)
+        first = list_mem[key].pop(0)
+        return resp_bulk(first)
+    
     return resp_error("ERR unknown command")
 
     
