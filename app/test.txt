@@ -1,0 +1,7 @@
+redis-cli PING
+redis-cli ECHO hello
+redis-cli SET foo bar
+redis-cli GET foo
+redis-cli SET a b PX 100
+sleep 0.2 && redis-cli GET a
+redis-cli RPUSH mylist x

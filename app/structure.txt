@@ -1,0 +1,52 @@
+redis-clone/
+└── app/
+    ├── main.py           # start server
+    ├── server.py         # asyncio + client handler
+    ├── protocol.py       # RESP parser + encoder
+    ├── commands.py       # PING / SET / GET / RPUSH
+    ├── storage.py        # dict, list, expiry
+    └── utils.py          # time helpers (optional)
+
+protocol.py
+
+Không biết Redis command là gì
+
+RESPParser
+
+resp_simple / resp_bulk / resp_int
+
+storage.py
+
+Không biết client là ai
+
+kv_store
+
+list_store
+
+expiry
+
+is_expired()
+
+commands.py
+
+Logic Redis
+
+handle_command(cmd)
+
+Không socket
+
+Không asyncio
+
+server.py
+
+Chỉ lo network
+
+asyncio.start_server
+
+handle_client
+
+parser.feed
+
+main.py
+
+Entry point
