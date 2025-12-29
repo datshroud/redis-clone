@@ -5,21 +5,31 @@
 from csv import writer
 import time
 
-from app.storage import is_expired
+from app.storage import kv_mem, expire_mem, list_mem, is_expired
 
-kv_mem = {}
-expire_mem = {}
 
 def resp_simple(s) -> bytes:
     return f"+{s}\r\n".encode()
+
 def resp_bulk(s: str | None) -> bytes:
     if s is None:
         return b"$-1\r\n"
     return f"${len(s)}\r\n{s}\r\n".encode()
+
 def resp_int(n: int) -> bytes:
     return f":{n}\r\n".encode()
+
 def resp_error(msg: int) -> bytes:
     return f"-{msg}\r\n".encode()
+
+def resp_array(arr=[]):
+    if not arr:
+        return b"*0\r\n"
+    ans = f"*{len(arr)}\r\n".encode()
+    for a in arr:
+        ans += f"${len(a)}\r\n{a}\r\n".encode()
+    return ans
+
 
 async def handle_command(command):
     if not command:
@@ -37,10 +47,12 @@ async def handle_command(command):
             opt = command[3].upper()
             if opt != "EX" and opt != "PX":
                 return resp_error(f"What is {opt}? We only have EX and PX.")
-            t = float(command[4])
+            t = int(command[4])
             sec = t if opt == "EX" else t / 1000
             expire_time = time.time() + sec
             expire_mem[key] = expire_time
+        else:
+            expire_mem.pop(key, None)
         kv_mem[key] = val
         return resp_simple("OK")
     elif name == "GET" and len(command) == 2:
@@ -48,5 +60,23 @@ async def handle_command(command):
         if key not in kv_mem or is_expired(key):
             return resp_bulk(None)
         return resp_bulk(kv_mem[key])
+    elif name == "RPUSH" and len(command) >= 3:
+        key = command[1]
+        if key not in list_mem:
+            list_mem[key] = []
+        for i in range(2, len(command)):
+            list_mem[key].append(command[i])
+        return resp_int(len(list_mem[key]))
+    elif name == "LRANGE" and len(command) == 4:
+        key = command[1]
+        if key not in list_mem:
+            return resp_array()
+        arr = list_mem[key]
+        try:
+            start = max(0, int(command[2]))
+            end = min(int(command[3]), len(arr))
+        except ValueError:
+            return resp_error("ERR value is not an integer")
+        return resp_array(arr[start : end])
     
     return resp_error("ERR unknown command")
