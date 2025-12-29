@@ -22,7 +22,7 @@ def resp_int(n: int) -> bytes:
 def resp_error(msg: int) -> bytes:
     return f"-{msg}\r\n".encode()
 
-def resp_array(arr=[]):
+def resp_array(arr = None):
     if not arr:
         return b"*0\r\n"
     ans = f"*{len(arr)}\r\n".encode()
@@ -62,6 +62,8 @@ async def handle_command(command):
         return resp_bulk(kv_mem[key])
     elif name == "RPUSH" and len(command) >= 3:
         key = command[1]
+        if key in kv_mem:
+            return resp_error("ERR int cannot append like list")
         if key not in list_mem:
             list_mem[key] = []
         for i in range(2, len(command)):
@@ -69,14 +71,32 @@ async def handle_command(command):
         return resp_int(len(list_mem[key]))
     elif name == "LRANGE" and len(command) == 4:
         key = command[1]
+        if key in kv_mem:
+            return resp_error("ERR int cannot range like list")
         if key not in list_mem:
             return resp_array()
         arr = list_mem[key]
         try:
-            start = max(0, int(command[2]))
-            end = min(int(command[3]), len(arr))
+            narr = len(arr)
+            start = int(command[2])
+            end = int(command[3])
+            if start < 0:
+                start += narr
+            if end < 0:
+                end += narr + 1
+            start = max(0, min(narr, start))
+            end = max(0, min(end, narr))
         except ValueError:
             return resp_error("ERR value is not an integer")
         return resp_array(arr[start : end])
-    
+    elif name == "LPUSH" and len(command) >= 3:
+        arr = command[2:]
+        key = command[1]
+        if key not in list_mem:
+            list_mem[key] = []
+        list_mem[key] = arr[::-1] + list_mem[key]
+        return resp_int(len(list_mem[key]))
+
     return resp_error("ERR unknown command")
+
+    
