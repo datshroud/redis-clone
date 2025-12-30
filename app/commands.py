@@ -2,11 +2,11 @@
 # COMMAND HANDLER
 # =======================
 
+import asyncio
 from csv import writer
 import time
 
-from app.storage import kv_mem, expire_mem, list_mem, is_expired
-
+import app.storage as storage
 
 def resp_simple(s) -> bytes:
     return f"+{s}\r\n".encode()
@@ -23,6 +23,8 @@ def resp_error(msg: int) -> bytes:
     return f"-{msg}\r\n".encode()
 
 def resp_array(arr = None):
+    if arr is None:
+        return b"*-1\r\n"
     if not arr:
         return b"*0\r\n"
     ans = f"*{len(arr)}\r\n".encode()
@@ -50,32 +52,32 @@ async def handle_command(command):
             t = int(command[4])
             sec = t if opt == "EX" else t / 1000
             expire_time = time.time() + sec
-            expire_mem[key] = expire_time
+            storage.expire_mem[key] = expire_time
         else:
-            expire_mem.pop(key, None)
-        kv_mem[key] = val
+            storage.expire_mem.pop(key, None)
+        storage.kv_mem[key] = val
         return resp_simple("OK")
     elif name == "GET" and len(command) == 2:
         key = command[1]
-        if key not in kv_mem or is_expired(key):
+        if key not in storage.kv_mem or storage.is_expired(key):
             return resp_bulk(None)
-        return resp_bulk(kv_mem[key])
+        return resp_bulk(storage.kv_mem[key])
     elif name == "RPUSH" and len(command) >= 3:
         key = command[1]
-        if key in kv_mem:
+        if key in storage.kv_mem:
             return resp_error("ERR int cannot append like list")
-        if key not in list_mem:
-            list_mem[key] = []
-        for i in range(2, len(command)):
-            list_mem[key].append(command[i])
-        return resp_int(len(list_mem[key]))
+        if key not in storage.list_mem:
+            storage.list_mem[key] = []
+        storage.list_mem[key] += command[2:]
+        storage.notify_list_push(key)
+        return resp_int(len(storage.list_mem[key]))
     elif name == "LRANGE" and len(command) == 4:
         key = command[1]
-        if key in kv_mem:
+        if key in storage.kv_mem:
             return resp_error("ERR int cannot range like list")
-        if key not in list_mem:
+        if key not in storage.list_mem:
             return resp_array()
-        arr = list_mem[key]
+        arr = storage.list_mem[key]
         try:
             narr = len(arr)
             start = int(command[2])
@@ -92,15 +94,17 @@ async def handle_command(command):
     elif name == "LPUSH" and len(command) >= 3:
         arr = command[2:]
         key = command[1]
-        if key not in list_mem:
-            list_mem[key] = []
-        list_mem[key] = arr[::-1] + list_mem[key]
-        return resp_int(len(list_mem[key]))
+        if key not in storage.list_mem:
+            storage.list_mem[key] = []
+        storage.list_mem[key] = arr[::-1] + storage.list_mem[key]
+        for i in range(2, len(command)):
+            storage.notify_list_push(key)
+        return resp_int(len(storage.list_mem[key]))
     elif name == "LLEN" and len(command) == 2:
         key = command[1]
-        if key not in list_mem:
+        if key not in storage.list_mem:
             return resp_int(0)
-        return resp_int(len(list_mem[key]))
+        return resp_int(len(storage.list_mem[key]))
     elif name == "LPOP" and 2 <= len(command) <= 3:
         key = command[1]
         start = 1
@@ -109,11 +113,39 @@ async def handle_command(command):
                 start = max(0, int(command[2]))
             except ValueError:
                 return resp_error("ERR value is not an integer")
-        if key not in list_mem:
+        if key not in storage.list_mem:
             return resp_bulk(None)
-        pop_arr = list_mem[key][:start]
-        list_mem[key] = list_mem[key][start:]
+        pop_arr = storage.list_mem[key][:start]
+        storage.list_mem[key] = storage.list_mem[key][start:]
         return resp_array(pop_arr)
+    elif name == "BLPOP" and len(command) == 3:
+        key = command[1]
+        try:
+            timeout = float(command[2])
+        except ValueError:
+            return resp_error("ERR value is not a float")
+        
+        if key in storage.list_mem and storage.list_mem[key]:
+            val = storage.list_mem[key].pop(0)
+            return resp_array([key, val])
+        
+        fut = asyncio.get_event_loop().create_future()
+        storage.waiter_mem.setdefault(key, []).append(fut)
+
+        try:
+            if timeout > 0:
+                await asyncio.wait_for(fut, timeout)
+            else:
+                await fut
+        except asyncio.TimeoutError:
+            storage.waiter_mem[key].remove(fut)
+            return resp_array()
+        
+        if key in storage.list_mem and storage.list_mem[key]:
+            return resp_array([key, storage.list_mem[key].pop(0)])
+        return resp_array()
+        
+
     return resp_error("ERR unknown command")
 
     
