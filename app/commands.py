@@ -144,7 +144,13 @@ async def handle_command(command):
         if key in storage.list_mem and storage.list_mem[key]:
             return resp_array([key, storage.list_mem[key].pop(0)])
         return resp_array()
-        
+    elif name == "TYPE" and len(command) == 2:
+        key = command[1]
+        if key in storage.kv_mem and not storage.is_expired(key):
+            return resp_simple("string")
+        elif key in storage.list_mem:
+            return resp_simple("list")
+        return resp_simple("none")
 
     return resp_error("ERR unknown command")
 
