@@ -1,12 +1,11 @@
-# =======================
-# COMMAND HANDLER
-# =======================
+
 
 import asyncio
 from csv import writer
 import time
 
 import app.storage as storage
+
 
 def resp_simple(s) -> bytes:
     return f"+{s}\r\n".encode()
@@ -32,6 +31,38 @@ def resp_array(arr = None):
         ans += f"${len(a)}\r\n{a}\r\n".encode()
     return ans
 
+# =======================
+# STREAM ID HANDLER
+# =======================
+
+def parse_stream_id(id):
+    if '-' not in id:
+        return None
+    try:
+        ms, seq = id.split('-', 1)
+        return int(ms), int(seq)
+    except ValueError:
+        return None
+    
+def validate_stream_id(key, id):
+    ms, seq = id
+    if ms == 0 and seq == 0:
+        return "ERR the ID specified in XADD must be greater than 0-0"
+    stream = storage.stream_mem[key]
+    if not stream:
+        return None
+    last_id, _ = stream[-1]
+    last_ms, last_seq = parse_stream_id(last_id)
+    if ms < last_ms:
+        return "ERR the ID specified in XADD must be greater than last stream ID"
+    if ms == last_ms and seq <= last_seq:
+        return "ERR the ID specified in XADD must be greater than last stream ID"
+    return None
+
+
+# =======================
+# COMMAND HANDLER
+# =======================
 
 async def handle_command(command):
     if not command:
@@ -154,14 +185,21 @@ async def handle_command(command):
             return resp_simple("stream")
         return resp_simple("none")
     elif name == "XADD" and len(command) >= 5:
+        # <milliseconds>-<sequence>
         key = command[1]
         id = command[2]
         if len(command) % 2 == 0:
             return resp_error("ERR wrong number of args for XADD")
+        parsed = parse_stream_id(id)
+        if not parsed:
+            return resp_error("ERR invalid stream ID")
         if key in storage.kv_mem or key in storage.list_mem:
             return resp_error("ERR wrong type")
         if key not in storage.stream_mem:
             storage.stream_mem[key] = []
+        err = validate_stream_id(key, parsed)
+        if err:
+            return resp_error(err)
         data = {}
         for i in range(3, len(command), 2):
             data[command[i]] = command[i + 1]

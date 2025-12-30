@@ -6,6 +6,7 @@ list_mem = {}
 waiter_mem = {}
 stream_mem = {}
 
+
 def is_expired(key):
     if key in expire_mem and time.time() >= expire_mem[key]:
         kv_mem.pop(key, None)
