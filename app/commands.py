@@ -150,8 +150,23 @@ async def handle_command(command):
             return resp_simple("string")
         elif key in storage.list_mem:
             return resp_simple("list")
+        elif key in storage.stream_mem:
+            return resp_simple("stream")
         return resp_simple("none")
-
+    elif name == "XADD" and len(command) >= 5:
+        key = command[1]
+        id = command[2]
+        if len(command) % 2 == 0:
+            return resp_error("ERR wrong number of args for XADD")
+        if key in storage.kv_mem or key in storage.list_mem:
+            return resp_error("ERR wrong type")
+        if key not in storage.stream_mem:
+            storage.stream_mem[key] = []
+        data = {}
+        for i in range(3, len(command), 2):
+            data[command[i]] = command[i + 1]
+        storage.stream_mem[key].append((id, data))
+        return resp_bulk(id)
     return resp_error("ERR unknown command")
 
     
