@@ -1,11 +1,8 @@
-
-
 import asyncio
 from csv import writer
 import time
 
 import app.storage as storage
-
 
 def resp_simple(s) -> bytes:
     return f"+{s}\r\n".encode()
@@ -31,11 +28,16 @@ def resp_array(arr = None):
         ans += f"${len(a)}\r\n{a}\r\n".encode()
     return ans
 
+def current_time_ms():
+    return int(time.time() * 1000)
+
 # =======================
 # STREAM ID HANDLER
 # =======================
 
 def parse_stream_id(id):
+    if id == "*":
+        return None, None
     if '-' not in id:
         return None
     ms, seq = id.split('-', 1)
@@ -59,24 +61,28 @@ def validate_stream_id(key, id):
     last_id, _ = stream[-1]
     last_ms, last_seq = parse_stream_id(last_id)
 
-    if seq is None:
-        if ms < last_ms:
-            return "ERR the ID specified in XADD must be greater than 0-0"
-        return None
-
     if ms < last_ms:
-        return "ERR the ID specified in XADD must be greater than last stream ID"
+        return "ERR The ID specified in XADD is equal or smaller than the target stream top item"
     if ms == last_ms and seq <= last_seq:
-        return "ERR the ID specified in XADD must be greater than last stream ID"
+        return "ERR The ID specified in XADD is equal or smaller than the target stream top item"
     return None
 
 def generate_sequence(key, ms):
-    stream = storage.stream_mem[key]
+    stream = storage.stream_mem.setdefault(key, [])
     if not stream:
         return 1 if ms == 0 else 0
     last_id, _ = stream[-1]
     last_ms, last_seq = parse_stream_id(last_id)
     return last_seq + 1 if last_ms == ms else 0
+
+def generate_full_id(key):
+    ms = current_time_ms()
+    stream = storage.stream_mem.setdefault(key, [])
+    if not stream:
+        return ms, (0 if ms > 0 else 1)
+    last_id, _ = storage.stream_mem[key][-1]
+    last_ms, last_seq = parse_stream_id(last_id)
+    return ms, (last_seq + 1 if last_ms == ms else 0)
 
 # =======================
 # COMMAND HANDLER
@@ -216,11 +222,14 @@ async def handle_command(command):
         if key not in storage.stream_mem:
             storage.stream_mem[key] = []
         ms, seq = parsed
-        err = validate_stream_id(key, parsed)
+        if ms is None and seq is None:
+            ms, seq = generate_full_id(key)
+        elif seq is None:
+            seq = generate_sequence(key, ms)
+        err = validate_stream_id(key, (ms, seq))
         if err:
             return resp_error(err)
-        if seq is None:
-            seq = generate_sequence(key, ms)
+        # print("ms, seq = ", ms, seq)
         id = f"{ms}-{seq}"
         data = {}
         for i in range(3, len(command), 2):
