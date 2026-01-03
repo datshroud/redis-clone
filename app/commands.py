@@ -1,7 +1,9 @@
 import asyncio
+import bisect
 from csv import writer
 import time
 
+import app.debug as debug
 import app.storage as storage
 
 def resp_simple(s) -> bytes:
@@ -28,12 +30,50 @@ def resp_array(arr = None):
         ans += f"${len(a)}\r\n{a}\r\n".encode()
     return ans
 
-def current_time_ms():
-    return int(time.time() * 1000)
+def resp_nested_array(arr):
+    if arr is None:
+        return b"*-1\r\n"
+    if not arr:
+        return b"*0\r\n"
+    res = f"*{len(arr)}\r\n".encode()
+    for a in arr:
+        if isinstance(a, list) or isinstance(a, tuple):
+            res += resp_nested_array(a)
+        else:
+            res += f"${len(a)}\r\n{a}\r\n".encode()
+    return res
+
+def resp_stream(stream):
+    res = []
+    for id, data in stream:
+        kv = []
+        for k, v in data.items():
+            kv.append(k)
+            kv.append(v)
+        res.append([id, kv])
+    return resp_nested_array(res)
+    
 
 # =======================
 # STREAM ID HANDLER
 # =======================
+
+def parse_range_id(id, is_start):
+    if '-' in id:
+        ms, seq = id.split('-', 1)
+        try:
+            return int(ms), int(seq)
+        except ValueError:
+            return None
+    else:
+        try:
+            return int(id), 0 if is_start else float("inf")
+        except ValueError:
+            return None
+
+
+def current_time_ms():
+    return int(time.time() * 1000)
 
 def parse_stream_id(id):
     if id == "*":
@@ -236,6 +276,24 @@ async def handle_command(command):
             data[command[i]] = command[i + 1]
         storage.stream_mem[key].append((id, data))
         return resp_bulk(id)
+    elif name == "XRANGE" and len(command) == 4:
+        key = command[1]
+        if key not in storage.stream_mem:
+            return resp_array([])
+        try:
+            start = parse_range_id(command[2], True)
+            end = parse_range_id(command[3], False)
+        except ValueError:
+            resp_error("ERR invalid stream ID")
+        
+        stream = storage.stream_mem[key]
+        res = []
+        for id_str, data in stream:
+            parsed_value = parse_stream_id(id_str)
+            if start <= parsed_value <= end:
+                res.append((id_str, data))
+        return resp_stream(stream)
+             
     return resp_error("ERR unknown command")
 
     
