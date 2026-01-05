@@ -30,6 +30,15 @@ def resp_array(arr = None):
         ans += f"${len(a)}\r\n{a}\r\n".encode()
     return ans
 
+def convert_dict_to_list(mp):
+    res = []
+    for k, v in mp.items():
+        if isinstance(v, dict):
+            v = convert_dict_to_list(v)
+        res.append(k)
+        res.append(v)
+    return res
+
 def resp_nested_array(arr):
     if arr is None:
         return b"*-1\r\n"
@@ -37,6 +46,8 @@ def resp_nested_array(arr):
         return b"*0\r\n"
     res = f"*{len(arr)}\r\n".encode()
     for a in arr:
+        if isinstance(a, dict):
+            a = convert_dict_to_list(a)    
         if isinstance(a, list) or isinstance(a, tuple):
             res += resp_nested_array(a)
         else:
@@ -59,6 +70,8 @@ def resp_stream(stream):
 # =======================
 
 def parse_range_id(id, is_start):
+    if id == "-" or id == "+":
+        return (0, 0) if is_start else (float("inf"), float("inf"))
     if '-' in id:
         ms, seq = id.split('-', 1)
         try:
@@ -292,8 +305,50 @@ async def handle_command(command):
             parsed_value = parse_stream_id(id_str)
             if start <= parsed_value <= end:
                 res.append((id_str, data))
-        return resp_stream(stream)
-             
+        # debug.log(f"XRANGE {key} from {start} to {end}, result={len(res)}")
+        return resp_stream(res)
+    elif name == "XREAD":
+        if command[1].upper() != "STREAMS":
+            return resp_error("ERR syntax error")
+        if len(command) % 2 or len(command) < 4:
+            return resp_error("ERR syntax error")
+
+        def query_single_stream(key, id):
+            parsed = parse_range_id(id, False)
+            if not parsed:
+                return None
+            last_ms, last_seq = parsed
+            if last_seq is None:
+                    last_seq = float("inf")
+                    if last_ms is None:
+                        last_ms = float("inf")
+            if key not in storage.stream_mem:
+                return [key, []]
+            stream = storage.stream_mem[key]
+            res = [key, []]
+            for id_str, data in stream:
+                ms, seq = parse_stream_id(id_str)
+                if ms < last_ms:
+                    continue
+                if ms == last_ms and seq <= last_seq:
+                    continue
+                res[1].append([id_str, data])
+            return res
+
+        idx = 2
+        start_idx_id = len(command) - 1 - idx + 1
+        diff = start_idx_id - idx
+        res = []
+        while idx + diff < len(command):
+            key = command[idx]
+            id = command[idx + diff]
+            query = query_single_stream(key, id)
+            if query is None:
+                return resp_error("ERR invalid stream ID")
+            if query[1]:
+                res.append(query)
+            idx += 1
+        return resp_nested_array(res)
     return resp_error("ERR unknown command")
 
     
