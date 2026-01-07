@@ -391,6 +391,19 @@ async def handle_command(command):
                     res.append(query)
                 idx += 1
             return resp_nested_array(res)
+    elif name == "INCR" and len(command) == 2:
+        key = command[1]
+        if key not in storage.kv_mem:
+            storage.kv_mem[key] = 0
+        val = storage.kv_mem[key]
+        try:
+            num = int(val)
+        except ValueError:
+            return resp_error("ERR value is not an integer or out of range")
+        num += 1
+        storage.kv_mem[key] = str(num)
+        return resp_int(num)
+        
     return resp_error("ERR unknown command")
 
 
