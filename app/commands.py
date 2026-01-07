@@ -69,7 +69,11 @@ def resp_stream(stream):
 # STREAM ID HANDLER
 # =======================
 
-def parse_range_id(id, is_start):
+def parse_range_id(id, is_start, key = None):
+    if id == "$":
+        if key not in storage.stream_mem:
+            return 0, 0
+        id = storage.stream_mem[key][-1][0]
     if id == "-" or id == "+":
         return (0, 0) if is_start else (float("inf"), float("inf"))
     if '-' in id:
@@ -136,6 +140,29 @@ def generate_full_id(key):
     last_id, _ = storage.stream_mem[key][-1]
     last_ms, last_seq = parse_stream_id(last_id)
     return ms, (last_seq + 1 if last_ms == ms else 0)
+
+def query_single_stream(key, id):
+    parsed = parse_range_id(id, False, key)
+    if not parsed:
+        return None
+    last_ms, last_seq = parsed
+    debug.log(f"last_ms = {last_ms}, last_seq = {last_seq}")
+    if last_seq is None:
+        last_seq = float("inf")
+        if last_ms is None:
+            last_ms = float("inf")
+    if key not in storage.stream_mem:
+        return [key, []]
+    stream = storage.stream_mem[key]
+    res = [key, []]
+    for id_str, data in stream:
+        ms, seq = parse_stream_id(id_str)
+        if ms < last_ms:
+            continue
+        if ms == last_ms and seq <= last_seq:
+            continue
+        res[1].append([id_str, data])
+    return res
 
 # =======================
 # COMMAND HANDLER
@@ -288,6 +315,7 @@ async def handle_command(command):
         for i in range(3, len(command), 2):
             data[command[i]] = command[i + 1]
         storage.stream_mem[key].append((id, data))
+        storage.notify_stream_add(key)
         return resp_bulk(id)
     elif name == "XRANGE" and len(command) == 4:
         key = command[1]
@@ -308,47 +336,62 @@ async def handle_command(command):
         # debug.log(f"XRANGE {key} from {start} to {end}, result={len(res)}")
         return resp_stream(res)
     elif name == "XREAD":
-        if command[1].upper() != "STREAMS":
-            return resp_error("ERR syntax error")
-        if len(command) % 2 or len(command) < 4:
-            return resp_error("ERR syntax error")
-
-        def query_single_stream(key, id):
-            parsed = parse_range_id(id, False)
-            if not parsed:
-                return None
-            last_ms, last_seq = parsed
-            if last_seq is None:
-                    last_seq = float("inf")
-                    if last_ms is None:
-                        last_ms = float("inf")
-            if key not in storage.stream_mem:
-                return [key, []]
-            stream = storage.stream_mem[key]
-            res = [key, []]
-            for id_str, data in stream:
-                ms, seq = parse_stream_id(id_str)
-                if ms < last_ms:
-                    continue
-                if ms == last_ms and seq <= last_seq:
-                    continue
-                res[1].append([id_str, data])
-            return res
-
-        idx = 2
-        start_idx_id = len(command) - 1 - idx + 1
-        diff = start_idx_id - idx
-        res = []
-        while idx + diff < len(command):
-            key = command[idx]
-            id = command[idx + diff]
-            query = query_single_stream(key, id)
-            if query is None:
-                return resp_error("ERR invalid stream ID")
-            if query[1]:
-                res.append(query)
-            idx += 1
-        return resp_nested_array(res)
+        if command[1].upper() == "BLOCK":
+            if len(command) != 6:
+                return resp_error("ERR syntax error")
+            try:
+                timeout = float(command[2]) / 1000
+            except ValueError:
+                return resp_error("ERR value is not a float")
+            if command[3].upper() != "STREAMS":
+                return resp_error("ERR syntax error")
+            key = command[4]
+            last_id = command[5]
+            fut = asyncio.get_event_loop().create_future()
+            res = query_single_stream(key, last_id)
+            if res is None:
+                res = []
+            if res[1]:
+                return resp_nested_array([res])
+            parsed = parse_range_id(last_id, False, key)
+            last_id = f"{parsed[0]}-{parsed[1]}"
+            storage.stream_waiter_mem[key].append((fut, last_id))
+            try:
+                if timeout > 0:
+                    await asyncio.wait_for(fut, timeout)
+                elif timeout == 0:
+                    await fut
+                else:
+                    return resp_error("ERR cant block in negative milisecond")
+            except asyncio.TimeoutError:
+                storage.remove_fut_stream(key, fut)
+                return resp_array()
+            res = query_single_stream(key, last_id)
+            if res is None:
+                res = []
+            if res[1]:
+                return resp_nested_array([res])
+            
+        else:
+            if command[1].upper() != "STREAMS":
+                return resp_error("ERR syntax error")
+            if len(command) % 2 or len(command) < 4:
+                return resp_error("ERR syntax error")
+            idx = 2
+            diff = (len(command) - 2) // 2
+            res = []
+            while idx + diff < len(command):
+                key = command[idx]
+                id = command[idx + diff]
+                debug.log(f"key = {key}, id = {id}")
+                query = query_single_stream(key, id)
+                if query is None:
+                    return resp_error("ERR invalid stream ID")
+                if query[1]:
+                    res.append(query)
+                idx += 1
+            return resp_nested_array(res)
     return resp_error("ERR unknown command")
+
 
     
