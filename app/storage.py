@@ -1,7 +1,7 @@
 from collections import defaultdict
 import time
 
-import app.debug as debug
+import app.debug.debug as debug
 
 class ListNode:
     __slots__ = ("value", "prev", "next")
@@ -24,6 +24,7 @@ class LinkedList:
         if not self._head:
             self._head = self._tail = node
             return
+        node.prev = self._tail
         self._tail.next = node
         self._tail = node
         
@@ -101,4 +102,3 @@ def remove_fut_stream(key, fut_target):
         if fut == fut_target:
             stream_waiter_mem[key].remove(stream_waiter)
             return
-

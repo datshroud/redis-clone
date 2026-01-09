@@ -1,5 +1,6 @@
 import asyncio
-from app.server import start_server  # noqa: F401
+
+from app.core.server import start_server
 
 if __name__ == "__main__":
     asyncio.run(start_server())

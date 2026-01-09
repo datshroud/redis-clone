@@ -1,3 +1,4 @@
 **/index.txt
 *.log
 *.pyc
+__pycache__/
